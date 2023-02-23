@@ -21,6 +21,7 @@ classdef spdDR < handle
         origDim = [];
         nClasses = [];        
         log_trn_X = [];
+        chol_trn_X = [];
         aff_graph = [];
     end
     %>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
@@ -44,6 +45,10 @@ classdef spdDR < handle
                     W = obj.perform_log_euc_DA();
                 case 5  %Euclidean
                     W = obj.perform_euc_DA();
+                case 6  %Bures-Wasserstein
+                    W = obj.perform_BW_DA();
+                case 7  %Fixed-Rank Bures-Wasserstein
+                    W = obj.perform_BWFR_DA();
                 otherwise
                     error('The metric is not defined');
             end
@@ -273,9 +278,17 @@ classdef spdDR < handle
                 fprintf('Number of training samples : %d.\n',obj.nTrn);
             end
             
-            
+            if (isempty(obj.chol_trn_X))
+                if (obj.verbose)
+                    fprintf('Preparing intermediate data.\n');
+                end
+                
+                obj.chol_trn_X = vec_chol(ob.trn_X);
+                
+            end
+
             %generating the affinity function
-            dist_orig = dist_BW(obj.trn_X); % IMPLEMENT
+            dist_orig = dist_BW(obj.chol_trn_X); % IMPLEMENT
             obj.aff_graph = obj.generate_Graphs(dist_orig);
             
             %initializing
@@ -405,6 +418,64 @@ classdef spdDR < handle
             end
             outGrad = (eye(size(W,1)) - W*W')*dF;
         end
+
+
+        function [outCost,outGrad] = graph_DA_CostGrad_BW(obj,W)
+            
+            WXW = zeros(obj.newDim,obj.newDim,obj.nTrn);
+            for tmpC1 = 1:obj.nTrn
+                WXW(:,:,tmpC1) = W'*obj.trn_X(:,:,tmpC1)*W;
+            end
+            
+            outCost = 0;
+            dF = zeros(obj.origDim,obj.newDim);
+            
+            [i,j,a_ij] = find(obj.aff_graph);
+            
+            for tmpC1 = 1:length(i)
+                outCost = outCost + a_ij(tmpC1)*dist_BW(WXW(:,:,i(tmpC1)) , WXW(:,:,j(tmpC1)));
+                X_i = obj.trn_X(:,:,i(tmpC1));
+                X_j = obj.trn_X(:,:,j(tmpC1));
+
+                XiW = Xii*W; WtXiW = W'*XiW;
+                XjW = X_j*W; WtXjW = W'*XjW;
+                
+                f = f - trace(WtXiW + WtXjW) + 2*trace(real(sqrtm(WtXiW*WtXjW)));
+                
+                WtXiWhalf = real(sqrtm(WtXiW));
+                
+                R = real(dsqrtm(WtXiWhalf*WtXjW*YtXiiYhalf, eye(r)));
+                dF = dF + 2*a_ij(tmpC1)* (XiW + XjW - 2*XjW*(WtXiWhalf *R*WtXiWhalf) - 2*X_iX_j*dsqrtm(WtXiiW, R*WtXiWhalf *WtXjW ) - 2*XiW* dsqrtm(WtXiW, WtXjW*WtXiWhalf*R));
+                
+            end
+            outGrad = (eye(size(W,1)) - W*W')*dF;
+        end
+
+        function [outCost,outGrad] = graph_DA_CostGrad_BWFR(obj,W)
+            chol_XW = zeros(obj.origDim,obj.newDim,obj.nTrn);
+            for tmpC1 = 1:obj.nTrn
+                chol_XW(:,:,tmpC1) = obj.chol_trn_X(:,:,tmpC1)*W;
+            end
+            
+            outCost = 0;
+            dF = zeros(obj.origDim,obj.newDim);
+            
+            [i,j,a_ij] = find(obj.aff_graph);
+            
+            for tmpC1 = 1:length(i)
+                outCost = outCost + a_ij(tmpC1)*dist_BWFR(chol_XW(:,:,i(tmpC1)) , chol_XW(:,:,j(tmpC1)));
+                
+                cholXi = obj.chol_trn_X(:,:,i(tmpC1));
+                cholXj = obj.chol_trn_X(:,:,j(tmpC1));
+                
+                [U,~,V] = svd(W'*cholXj'*cholXi*W);
+                W = U*V';
+                dF = dF + 2*a_ij(tmpC1)*(cholXi'*cholXi*W - cholXj'*cholXi*W*U - cholXi'*cholXj*W*U' + cholXj'*cholXj*W);
+                
+            end
+            outGrad = (eye(size(W,1)) - W*W')*dF;
+        end
+
         
         %>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
         function WXW = map_trn_X(obj,W)

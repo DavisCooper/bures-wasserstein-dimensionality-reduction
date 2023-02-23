@@ -13,7 +13,6 @@ spdDR_Obj.trn_y = covD_Struct.trn_y;
 spdDR_Obj.metric = 1;
 W_airm = spdDR_Obj.perform_graph_DA();
 
-
 % Stein
 spdDR_Obj.metric = 2;
 W_stein = spdDR_Obj.perform_graph_DA();
